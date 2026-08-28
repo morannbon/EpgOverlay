@@ -1,0 +1,15 @@
+EpgOverlay License
+
+Copyright (c) EpgOverlay contributors
+
+Permission is granted to use, modify, and redistribute the EpgOverlay-specific
+implementation contained in this repository, with or without modification.
+
+This permission does not apply to files derived from or belonging to the TvAIr
+Plugin SDK or TvAIr. Those files remain subject to their own distribution terms.
+The TvAIr Plugin SDK files included for building this project are located under
+TvAIrPlugin/; see TvAIrPlugin/LICENSE.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED. IN NO EVENT SHALL THE AUTHORS OR DISTRIBUTORS BE LIABLE FOR ANY CLAIM,
+DAMAGES, OR OTHER LIABILITY ARISING FROM THE USE OF THE SOFTWARE.

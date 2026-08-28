@@ -1,0 +1,22 @@
+# Visual Studio / MSBuild outputs
+.vs/
+bin/
+obj/
+**/bin/
+**/obj/
+
+# User-specific IDE files
+*.user
+*.suo
+
+# Test / coverage outputs
+TestResults/
+
+# Editor / local workspace files
+.vscode/
+.idea/
+
+# Temporary / backup / log files
+*.log
+*.tmp
+*.bak
