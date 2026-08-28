@@ -1,4 +1,5 @@
 EpgOverlay
+※TvAIrバージョン1.2.0以上が必要です
 
 概要
 EpgOverlayは、TVTestのEPGデータを読み込み、TvAIrの番組表へ重ね合わせて表示するTvAIr用プラグインです。
