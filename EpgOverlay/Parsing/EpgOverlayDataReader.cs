@@ -334,7 +334,8 @@ internal sealed class EpgOverlayDataReader
         //   FileHeader(24 bytes)
         //   Service chunk(0x02, 8 bytes: NID/TSID/SID/EventCount)
         //     Event chunk(0x04, 24 bytes: event id, flags, start, duration, updated)
-        //       EventName/EventText/EventExtendedText chunks
+        //       EventName/EventText/EventExtendedText/EventGroup chunks
+        //       EventGroup(COMMON) may point to another service/event whose descriptors are shared.
         //     EventEnd(0x05)
         //   ServiceEnd(0x03)
         //   End(0x01)
@@ -414,6 +415,8 @@ internal sealed class EpgOverlayDataReader
                 var detailParts = new List<string>();
                 var extendedItems = new Dictionary<string, string>();
                 var genreCodes = new List<string>();
+                ushort? commonServiceId = null;
+                ushort? commonEventId = null;
 
                 while (TryReadChunk(data, ref pos, out var eventTag, out var eventPayloadStart, out var eventPayloadEnd))
                 {
@@ -431,6 +434,11 @@ internal sealed class EpgOverlayDataReader
                         case 0x0B: // EventExtendedText
                             ReadTvTestExtendedText(data, eventPayloadStart, eventPayloadEnd, detailParts, extendedItems);
                             break;
+                        case 0x0C: // EventGroup
+                            ReadTvTestCommonEventReference(
+                                data, eventPayloadStart, eventPayloadEnd, serviceKey.ServiceId,
+                                ref commonServiceId, ref commonEventId);
+                            break;
                         default:
                             AddGenreCodes(genreCodes, ParseGenreCodesFromChunkPayload(eventTag, data.AsSpan(eventPayloadStart, eventPayloadEnd - eventPayloadStart)));
                             break;
@@ -440,7 +448,11 @@ internal sealed class EpgOverlayDataReader
                 }
 
                 if (!IsPlausibleEvent(startTime, duration)) continue;
-                if (string.IsNullOrWhiteSpace(title) && string.IsNullOrWhiteSpace(outline) && detailParts.Count == 0 && extendedItems.Count == 0) continue;
+                if (string.IsNullOrWhiteSpace(title)
+                    && string.IsNullOrWhiteSpace(outline)
+                    && detailParts.Count == 0
+                    && extendedItems.Count == 0
+                    && (!commonServiceId.HasValue || !commonEventId.HasValue)) continue;
 
                 var detail = string.Join(" ", detailParts.Where(p => !string.IsNullOrWhiteSpace(p)).Distinct());
                 results.Add(new LocalEpgOverlayEvent
@@ -459,13 +471,109 @@ internal sealed class EpgOverlayDataReader
                     Detail = detail,
                     ExtendedItems = extendedItems,
                     GenreCodes = FormatGenreCodes(genreCodes),
+                    CommonServiceId = commonServiceId,
+                    CommonEventId = commonEventId,
                     SourcePath = path,
                     SourceWriteTime = sourceWriteTime
                 });
             }
         }
 
+        ResolveTvTestCommonEvents(results);
         return new TvTestEpgDataReadResult(results, complete);
+    }
+
+    private static void ReadTvTestCommonEventReference(
+        byte[] data, int start, int end, int currentServiceId,
+        ref ushort? commonServiceId, ref ushort? commonEventId)
+    {
+        if (start >= end) return;
+
+        var pos = start;
+        var groupCount = data[pos++];
+        for (var groupIndex = 0; groupIndex < groupCount; groupIndex++)
+        {
+            if (pos + 2 > end) return;
+            var groupType = data[pos++];
+            var eventCount = data[pos++];
+            var eventBytes = eventCount * 8;
+            if (pos + eventBytes > end) return;
+
+            // ARIB event_group_descriptor group_type=0x01 is event sharing (common event).
+            // TVTest/LibISDB resolves the single referenced service/event within the same NID/TSID.
+            if (groupType == 0x01 && eventCount == 1)
+            {
+                var referencedServiceId = ReadUInt16Little(data, pos);
+                var referencedEventId = ReadUInt16Little(data, pos + 2);
+                if (referencedServiceId != currentServiceId)
+                {
+                    commonServiceId = referencedServiceId;
+                    commonEventId = referencedEventId;
+                }
+            }
+
+            pos += eventBytes;
+        }
+    }
+
+    private static void ResolveTvTestCommonEvents(List<LocalEpgOverlayEvent> events)
+    {
+        var byIdentity = events
+            .GroupBy(e => (
+                e.ServiceKey.NetworkId,
+                e.ServiceKey.TransportStreamId,
+                e.ServiceKey.ServiceId,
+                e.EventId))
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(Score).First());
+
+        var resolved = new HashSet<(int NetworkId, int TransportStreamId, int ServiceId, ushort EventId)>();
+        var resolving = new HashSet<(int NetworkId, int TransportStreamId, int ServiceId, ushort EventId)>();
+
+        foreach (var item in events)
+        {
+            ResolveTvTestCommonEvent(item, byIdentity, resolved, resolving);
+        }
+    }
+
+    private static void ResolveTvTestCommonEvent(
+        LocalEpgOverlayEvent item,
+        IReadOnlyDictionary<(int NetworkId, int TransportStreamId, int ServiceId, ushort EventId), LocalEpgOverlayEvent> byIdentity,
+        HashSet<(int NetworkId, int TransportStreamId, int ServiceId, ushort EventId)> resolved,
+        HashSet<(int NetworkId, int TransportStreamId, int ServiceId, ushort EventId)> resolving)
+    {
+        var itemKey = (
+            item.ServiceKey.NetworkId,
+            item.ServiceKey.TransportStreamId,
+            item.ServiceKey.ServiceId,
+            item.EventId);
+        if (resolved.Contains(itemKey)) return;
+        if (!resolving.Add(itemKey)) return;
+
+        try
+        {
+            if (!item.CommonServiceId.HasValue || !item.CommonEventId.HasValue) return;
+
+            var sourceKey = (
+                item.ServiceKey.NetworkId,
+                item.ServiceKey.TransportStreamId,
+                (int)item.CommonServiceId.Value,
+                item.CommonEventId.Value);
+            if (!byIdentity.TryGetValue(sourceKey, out var source)) return;
+
+            ResolveTvTestCommonEvent(source, byIdentity, resolved, resolving);
+
+            if (string.IsNullOrWhiteSpace(item.Title)) item.Title = source.Title;
+            if (string.IsNullOrWhiteSpace(item.Outline)) item.Outline = source.Outline;
+            if (string.IsNullOrWhiteSpace(item.Detail)) item.Detail = source.Detail;
+            if (item.ExtendedItems.Count == 0 && source.ExtendedItems.Count > 0)
+                item.ExtendedItems = new Dictionary<string, string>(source.ExtendedItems);
+            if (string.IsNullOrWhiteSpace(item.GenreCodes)) item.GenreCodes = source.GenreCodes;
+        }
+        finally
+        {
+            resolving.Remove(itemKey);
+            resolved.Add(itemKey);
+        }
     }
 
 
@@ -1077,6 +1185,8 @@ internal sealed class LocalEpgOverlayEvent
     public string Detail { get; set; } = string.Empty;
     public IReadOnlyDictionary<string, string> ExtendedItems { get; set; } = new Dictionary<string, string>();
     public string GenreCodes { get; set; } = string.Empty;
+    public ushort? CommonServiceId { get; set; }
+    public ushort? CommonEventId { get; set; }
     public string SourcePath { get; set; } = string.Empty;
     public DateTimeOffset SourceWriteTime { get; set; }
 }

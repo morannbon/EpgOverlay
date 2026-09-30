@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net8.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
@@ -8,16 +8,21 @@
     <Platforms>x86;x64</Platforms>
     <AssemblyName>EpgOverlay</AssemblyName>
     <RootNamespace>EpgOverlay</RootNamespace>
-    <Version>1.0.0</Version>
-    <AssemblyVersion>1.0.0.0</AssemblyVersion>
-    <FileVersion>1.0.0.0</FileVersion>
-    <InformationalVersion>1.0.0</InformationalVersion>
+    <Version>1.0.1</Version>
+    <AssemblyVersion>1.0.1.0</AssemblyVersion>
+    <FileVersion>1.0.1.0</FileVersion>
+    <InformationalVersion>1.0.1</InformationalVersion>
     <GenerateDependencyFile>false</GenerateDependencyFile>
     <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
   </PropertyGroup>
 
+  <!-- Developer Diagnostics canonical build boundary.
+       This public-release deliverable keeps diagnostics OFF by default.
+       Product behavior must remain identical apart from developer diagnostics.
+       Product behavior must not diverge across this boundary. -->
   <PropertyGroup>
-    <Configurations>Release</Configurations>
+    <TvAirPluginDeveloperDiagnostics Condition="'$(TvAirPluginDeveloperDiagnostics)' == ''">false</TvAirPluginDeveloperDiagnostics>
+    <DefineConstants Condition="'$(TvAirPluginDeveloperDiagnostics)' == 'true'">$(DefineConstants);TVAIR_PLUGIN_DEVELOPER_DIAGNOSTICS</DefineConstants>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Platform)'=='x86'">
